@@ -1,0 +1,76 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voice-input",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "={{$json.input}}",
+        "options": {}
+      },
+      "name": "Mistral",
+      "type": "n8n-nodes-base.mistral",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "output",
+              "value": "={{$node[\"Mistral\"].json[\"content\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Set Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        650,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Mistral",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral": {
+      "main": [
+        [
+          {
+            "node": "Set Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+} 
