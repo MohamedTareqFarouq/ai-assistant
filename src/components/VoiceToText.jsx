@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import './VoiceToText.css';
 
-const VoiceToText = () => {
+const VoiceToText =  () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState(null);
   const [voices, setVoices] = useState([]);
@@ -11,11 +12,12 @@ const VoiceToText = () => {
   const [autoSpeak, setAutoSpeak] = useState(false);
 
   const {
-    transcript,
+    transcript,   
     listening,
     resetTranscript,
     browserSupportsSpeechRecognition
   } = useSpeechRecognition();
+
 
   // Load available voices
   useEffect(() => {
@@ -53,13 +55,16 @@ const VoiceToText = () => {
     );
   }
 
-  const speakText = (text) => {
+  const speakText = async (text) => {
     try {
       if (!text.trim()) {
         setError('No text to speak');
         return;
       }
 
+      const response = await axios.post(`https://to7a2.app.n8n.cloud/webhook/037cbcac-3c87-4055-a6d5-20c54f50a62d`, {
+        body: text
+    })
       // Cancel any ongoing speech
       window.speechSynthesis.cancel();
 
