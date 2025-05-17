@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import './VoiceToText.css';
+import io from 'socket.io-client';
+
+const socket = io('http://localhost:5000');
 
 const VoiceToText =  () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -10,7 +13,27 @@ const VoiceToText =  () => {
   const [error, setError] = useState(null);
   const [typedText, setTypedText] = useState('');
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  // const [messages, setMessages] = useState([]);
+  useEffect(() => {
+    socket.on('connect', () => {
+      console.log('✅ Connected to WebSocket server');
+      setIsConnected(true);
+    });
 
+    socket.on('n8n-message', (data) => {
+      console.log('📨 Message from n8n:', data);
+      setTypedText(prev => prev + '\n' + JSON.stringify(data, null, 2)); // ✅
+    });
+    socket.on('disconnect', () => {
+      console.log('❌ Disconnected from server');
+      setIsConnected(false);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
   const {
     transcript,   
     listening,
@@ -105,10 +128,22 @@ const VoiceToText =  () => {
     setTypedText(e.target.value);
   };
 
+  const handleDisconnect = () => {
+    socket.disconnect();
+    setIsConnected(false);
+  };
+
   return (
     <div className="voice-container">
       <div className="header">
         <h2>Professional Voice Assistant</h2>
+        <button 
+          onClick={handleDisconnect}
+          className="control-button"
+          disabled={!isConnected}
+        >
+          {isConnected ? 'Disconnect' : 'Disconnected'}
+        </button>
         {error && (
           <div className="error-message">
             <p>{error}</p>
