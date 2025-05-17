@@ -4,66 +4,90 @@ import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognitio
 import './VoiceToText.css';
 import io from 'socket.io-client';
 
-const socket = io('http://localhost:5000');
-
-const VoiceToText =  () => {
+const VoiceToText = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState(null);
   const [voices, setVoices] = useState([]);
   const [error, setError] = useState(null);
   const [typedText, setTypedText] = useState('');
+  const [receivedMessages, setReceivedMessages] = useState([]);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  // const [messages, setMessages] = useState([]);
+  const [socket, setSocket] = useState(null);
+
   useEffect(() => {
-    socket.on('connect', () => {
-      console.log('✅ Connected to WebSocket server');
-      setIsConnected(true);
+    // Initialize socket connection
+    const newSocket = io('http://localhost:5000', {
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
     });
 
-    socket.on('n8n-message', (data) => {
-      console.log('📨 Message from n8n:', data);
-      setTypedText(prev => prev + '\n' + JSON.stringify(data, null, 2)); // ✅
+    newSocket.on('connect', () => {
+      console.log('✅ Connected to WebSocket server');
+      setIsConnected(true);
+      setError(null);
     });
-    socket.on('disconnect', () => {
+
+    newSocket.on('connect_error', (err) => {
+      console.error('Connection error:', err);
+      setError('Failed to connect to server. Retrying...');
+      setIsConnected(false);
+    });
+
+    newSocket.on('n8n-message', (data) => {
+      console.log('📨 Message from n8n:', data.message);
+      const messageText = typeof data.message === 'string' ? data.message : JSON.stringify(data.message, null, 2);
+      setReceivedMessages(prev => [...prev, messageText]);
+      setTypedText(prev => {
+        const newText = prev ? `${prev}\n${messageText}` : messageText;
+        return newText;
+      });
+    });
+
+    newSocket.on('disconnect', () => {
       console.log('❌ Disconnected from server');
       setIsConnected(false);
     });
 
+    setSocket(newSocket);
+
+    // Cleanup function
     return () => {
-      socket.disconnect();
+      if (newSocket) {
+        newSocket.disconnect();
+        newSocket.removeAllListeners();
+      }
     };
-  }, []);
+  }, []); // Empty dependency array means this runs once on mount
+
   const {
-    transcript,   
+    transcript,
     listening,
     resetTranscript,
     browserSupportsSpeechRecognition
   } = useSpeechRecognition();
 
-
-  // Load available voices
   useEffect(() => {
     const loadVoices = () => {
       const availableVoices = window.speechSynthesis.getVoices();
       setVoices(availableVoices);
-      setSelectedVoice(availableVoices[0]); // Default to first voice
+      setSelectedVoice(availableVoices[0]);
     };
 
     window.speechSynthesis.onvoiceschanged = loadVoices;
     loadVoices();
 
     return () => {
-      window.speechSynthesis.cancel(); // Cleanup
+      window.speechSynthesis.cancel();
     };
   }, []);
 
-  // Auto-speak effect when typing
   useEffect(() => {
     if (autoSpeak && typedText && !isSpeaking) {
       const timeoutId = setTimeout(() => {
-        speakText(typedText);
-      }, 1000); // Wait 1 second after typing stops before speaking
+        handleSpeak(typedText);
+      }, 1000);
 
       return () => clearTimeout(timeoutId);
     }
@@ -78,25 +102,27 @@ const VoiceToText =  () => {
     );
   }
 
-  const speakText = async (text) => {
+  const handleSpeak = async (text) => {
+    if (!text.trim()) {
+      setError('No text to speak');
+      return;
+    }
+
     try {
-      if (!text.trim()) {
-        setError('No text to speak');
-        return;
-      }
-
-      const response = await axios.post(`https://to7a2.app.n8n.cloud/webhook/037cbcac-3c87-4055-a6d5-20c54f50a62d`, {
+      setIsSpeaking(true);
+      
+      // Send to n8n first
+      await axios.post(`https://to7a2.app.n8n.cloud/webhook/037cbcac-3c87-4055-a6d5-20c54f50a62d`, {
         body: text
-    })
-      // Cancel any ongoing speech
-      window.speechSynthesis.cancel();
+      });
 
+      // Then handle speech synthesis
+      window.speechSynthesis.cancel();
       const speech = new SpeechSynthesisUtterance(text);
       speech.voice = selectedVoice;
       speech.rate = 1;
       speech.pitch = 1;
 
-      speech.onstart = () => setIsSpeaking(true);
       speech.onend = () => setIsSpeaking(false);
       speech.onerror = (event) => {
         setError('Error speaking text: ' + event.error);
@@ -107,6 +133,7 @@ const VoiceToText =  () => {
     } catch (err) {
       setError('Failed to initialize speech synthesis');
       console.error('Speech synthesis error:', err);
+      setIsSpeaking(false);
     }
   };
 
@@ -129,27 +156,36 @@ const VoiceToText =  () => {
   };
 
   const handleDisconnect = () => {
-    socket.disconnect();
-    setIsConnected(false);
+    if (socket) {
+      socket.disconnect();
+      setIsConnected(false);
+    }
+  };
+
+  const handleReconnect = () => {
+    if (socket) {
+      socket.connect();
+    }
   };
 
   return (
     <div className="voice-container">
       <div className="header">
         <h2>Professional Voice Assistant</h2>
-        <button 
-          onClick={handleDisconnect}
-          className="control-button"
-          disabled={!isConnected}
-        >
-          {isConnected ? 'Disconnect' : 'Disconnected'}
-        </button>
+        <div className="connection-controls">
+          <button onClick={handleDisconnect} className="control-button" disabled={!isConnected}>
+            {isConnected ? 'Disconnect' : 'Disconnected'}
+          </button>
+          {!isConnected && (
+            <button onClick={handleReconnect} className="control-button">
+              Reconnect
+            </button>
+          )}
+        </div>
         {error && (
           <div className="error-message">
             <p>{error}</p>
-            <button onClick={() => setError(null)} className="close-button">
-              ✕
-            </button>
+            <button onClick={() => setError(null)} className="close-button">✕</button>
           </div>
         )}
       </div>
@@ -169,38 +205,38 @@ const VoiceToText =  () => {
         <textarea
           value={typedText}
           onChange={handleTextChange}
-          placeholder="Type or paste text here..."
+          placeholder="Type or paste text here... Messages from n8n will also appear here"
           className="text-input"
         />
-        <button 
-          onClick={() => speakText(typedText)}
-          className={`control-button speak ${isSpeaking ? 'speaking' : ''}`}
-          disabled={!typedText || isSpeaking}
-        >
-          {isSpeaking ? 'Speaking...' : 'Speak Typed Text'}
-        </button>
+        <div className="button-group">
+          <button 
+            onClick={() => handleSpeak(typedText)}
+            className={`control-button speak ${isSpeaking ? 'speaking' : ''}`}
+            disabled={!typedText || isSpeaking}
+          >
+            {isSpeaking ? 'Speaking...' : 'Speak Text'}
+          </button>
+          <button
+            onClick={() => setTypedText('')}
+            className="control-button clear"
+            disabled={!typedText}
+          >
+            Clear Text
+          </button>
+        </div>
       </div>
 
-      <div className="divider">
-        <span>OR</span>
-      </div>
+      <div className="divider"><span>OR</span></div>
 
       <div className="controls">
-        <button 
+        <button
           onClick={handleStartListening}
           className={`control-button ${listening ? 'recording' : ''}`}
         >
-          {listening ? (
-            <>
-              <span className="pulse-dot"></span>
-              Stop Recording
-            </>
-          ) : (
-            'Start Recording'
-          )}
+          {listening ? <><span className="pulse-dot"></span>Stop Recording</> : 'Start Recording'}
         </button>
 
-        <button 
+        <button
           onClick={resetTranscript}
           className="control-button clear"
           disabled={!transcript}
@@ -208,8 +244,8 @@ const VoiceToText =  () => {
           Clear Text
         </button>
 
-        <button 
-          onClick={() => speakText(transcript)}
+        <button
+          onClick={() => handleSpeak(transcript)}
           className={`control-button speak ${isSpeaking ? 'speaking' : ''}`}
           disabled={!transcript || isSpeaking}
         >
@@ -245,8 +281,18 @@ const VoiceToText =  () => {
           )}
         </div>
       </div>
+
+      <div className="message-log">
+        <h3>Incoming Messages (from n8n)</h3>
+        <div className="message-log-box">
+          {receivedMessages.length === 0 && <p>No messages yet.</p>}
+          {receivedMessages.map((msg, idx) => (
+            <pre key={idx} className="message-item">{msg}</pre>
+          ))}
+        </div>
+      </div>
     </div>
   );
 };
 
-export default VoiceToText; 
+export default VoiceToText;
