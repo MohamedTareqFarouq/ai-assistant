@@ -5,8 +5,8 @@ import './VoiceToText.css';
 import io from 'socket.io-client';
 import VoiceChat from './VoiceChat';
 
-const WEBHOOK_URL = 'https://casillas.app.n8n.cloud/webhook/037cbcac-3c87-4055-a6d5-20c54f50a62d';
-const SOCKET_URL = 'http://192.168.8.105:5000';
+const WEBHOOK_URL = 'https://mikooto.app.n8n.cloud/webhook/f17e458d-9059-42c2-8d14-57acda06fc41';
+const SOCKET_URL = 'http://192.168.8.114:5000';
 
 const VoiceToText = () => {
   const [inputText, setInputText] = useState('');
