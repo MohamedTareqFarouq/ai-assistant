@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import './VoiceToText.css';
 import io from 'socket.io-client';
+import VoiceChat from './VoiceChat';
 
 const WEBHOOK_URL = 'https://casillas.app.n8n.cloud/webhook/037cbcac-3c87-4055-a6d5-20c54f50a62d';
 const SOCKET_URL = 'http://192.168.8.105:5000';
@@ -14,7 +15,11 @@ const VoiceToText = () => {
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState([]);
-  const [showNewChatConfirm, setShowNewChatConfirm] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [mode, setMode] = useState('text'); // 'text' or 'voice'
+  const speechSynthesis = window.speechSynthesis;
+  const voices = useRef([]);
 
   const {
     transcript,
@@ -22,6 +27,14 @@ const VoiceToText = () => {
     resetTranscript,
     browserSupportsSpeechRecognition
   } = useSpeechRecognition();
+
+  useEffect(() => {
+    // Load chat history from localStorage on component mount
+    const savedHistory = localStorage.getItem('chatHistory');
+    if (savedHistory) {
+      setChatHistory(JSON.parse(savedHistory));
+    }
+  }, []);
 
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
@@ -38,13 +51,89 @@ const VoiceToText = () => {
     return () => newSocket.disconnect();
   }, []);
 
+  useEffect(() => {
+    // Load available voices
+    const loadVoices = () => {
+      voices.current = speechSynthesis.getVoices();
+    };
+
+    loadVoices();
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+      speechSynthesis.onvoiceschanged = loadVoices;
+    }
+
+    return () => {
+      if (speechSynthesis.speaking) {
+        speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  const speak = (text) => {
+    if (speechSynthesis.speaking) {
+      speechSynthesis.cancel();
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    // Try to find an English voice
+    const englishVoice = voices.current.find(voice => 
+      voice.lang.startsWith('en') && voice.name.includes('Male')
+    );
+    if (englishVoice) {
+      utterance.voice = englishVoice;
+    }
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    speechSynthesis.speak(utterance);
+  };
+
   const handleAIResponse = useCallback((data) => {
     const messageText = typeof data.message === 'string' 
       ? data.message 
       : JSON.stringify(data.message, null, 2);
 
     addMessage('ai', messageText);
-  }, []);
+    
+    if (mode === 'voice') {
+      speak(messageText);
+    }
+  }, [mode]);
+
+  const saveCurrentChatToHistory = () => {
+    if (messages.length > 0) {
+      const newChat = {
+        id: Date.now(),
+        messages: [...messages],
+        timestamp: new Date().toLocaleString(),
+        preview: messages[0].text.slice(0, 50) + '...'
+      };
+      
+      setChatHistory(prev => {
+        const updatedHistory = [newChat, ...prev];
+        localStorage.setItem('chatHistory', JSON.stringify(updatedHistory));
+        return updatedHistory;
+      });
+    }
+  };
+
+  const startNewChat = () => {
+    saveCurrentChatToHistory();
+    setMessages([]);
+    setInputText('');
+    if (listening) {
+      resetTranscript();
+      SpeechRecognition.stopListening();
+    }
+  };
+
+  const loadChatFromHistory = (chatId) => {
+    const selectedChat = chatHistory.find(chat => chat.id === chatId);
+    if (selectedChat) {
+      saveCurrentChatToHistory();
+      setMessages(selectedChat.messages);
+      setShowHistory(false);
+    }
+  };
 
   const handleSendMessage = async (text) => {
     if (!text.trim() || isProcessing) return;
@@ -93,16 +182,6 @@ const VoiceToText = () => {
     }
   };
 
-  const startNewChat = () => {
-    setMessages([]);
-    setInputText('');
-    if (listening) {
-      resetTranscript();
-      SpeechRecognition.stopListening();
-    }
-    setShowNewChatConfirm(false);
-  };
-
   const addMessage = (sender, text) => {
     setMessages(prev => [...prev, {
       id: Date.now(),
@@ -111,6 +190,17 @@ const VoiceToText = () => {
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }]);
   };
+
+  const switchMode = () => {
+    if (listening) {
+      SpeechRecognition.stopListening();
+    }
+    setMode(mode === 'text' ? 'voice' : 'text');
+  };
+
+  if (mode === 'voice') {
+    return <VoiceChat onSwitchMode={switchMode} />;
+  }
 
   if (!browserSupportsSpeechRecognition) {
     return (
@@ -125,18 +215,23 @@ const VoiceToText = () => {
       <header className="chat-header">
         <h1>AI Assistant</h1>
         <div className="header-actions">
+          <button 
+            className="mode-switch"
+            onClick={switchMode}
+            title="Switch to voice chat"
+          >
+            <i className="fas fa-microphone" />
+          </button>
           <div className={`connection-status ${isConnected ? 'connected' : ''}`}>
             {isConnected ? 'Connected' : 'Disconnected'}
           </div>
-          {messages.length > 0 && (
-            <button 
-              className="new-chat" 
-              onClick={() => setShowNewChatConfirm(true)}
-              title="Start new chat"
-            >
-              <i className="fas fa-plus" />
-            </button>
-          )}
+          <button 
+            className="history-button" 
+            onClick={() => setShowHistory(true)}
+            title="View chat history"
+          >
+            <i className="fas fa-history" />
+          </button>
         </div>
       </header>
 
@@ -177,14 +272,25 @@ const VoiceToText = () => {
                 onClick={handleVoiceInput}
                 className={`voice ${listening ? 'active' : ''}`}
                 disabled={isProcessing}
+                title={listening ? "Stop recording" : "Start recording"}
               >
                 <i className={`fas ${listening ? 'fa-stop' : 'fa-microphone'}`} />
+              </button>
+
+              <button
+                onClick={startNewChat}
+                className="new-chat-button"
+                title="Start new chat"
+                disabled={isProcessing}
+              >
+                <i className="fas fa-plus-circle" />
               </button>
 
               <button
                 onClick={() => handleSendMessage(inputText)}
                 className="send"
                 disabled={(!inputText.trim() && !transcript) || isProcessing}
+                title="Send message"
               >
                 <i className="fas fa-paper-plane" />
               </button>
@@ -193,18 +299,76 @@ const VoiceToText = () => {
         </div>
       </main>
 
-      {showNewChatConfirm && (
+      {showHistory && (
         <div className="modal-overlay">
-          <div className="modal">
-            <h3>Start New Chat</h3>
-            <p>Are you sure you want to start a new chat? This will clear the current conversation.</p>
-            <div className="modal-actions">
-              <button onClick={() => setShowNewChatConfirm(false)} className="cancel">
-                Cancel
+          <div className="modal history-modal">
+            <div className="history-header">
+              <h3>
+                <i className="fas fa-history"></i>
+                Chat History
+              </h3>
+              <button 
+                onClick={() => setShowHistory(false)} 
+                className="close-button"
+                title="Close history"
+              >
+                <i className="fas fa-times"></i>
               </button>
-              <button onClick={startNewChat} className="confirm">
-                Start New Chat
+            </div>
+
+            <div className="chat-history-list">
+              {chatHistory.length > 0 ? (
+                chatHistory.map(chat => (
+                  <div 
+                    key={chat.id} 
+                    className="history-item"
+                    onClick={() => loadChatFromHistory(chat.id)}
+                  >
+                    <div className="history-item-content">
+                      <div className="history-item-header">
+                        <span className="message-count">
+                          <i className="fas fa-comments"></i>
+                          {chat.messages.length} messages
+                        </span>
+                        <time>
+                          <i className="fas fa-clock"></i>
+                          {chat.timestamp}
+                        </time>
+                      </div>
+                      <p className="preview">{chat.preview}</p>
+                    </div>
+                    <i className="fas fa-chevron-right history-arrow"></i>
+                  </div>
+                ))
+              ) : (
+                <div className="no-history">
+                  <i className="fas fa-inbox"></i>
+                  <p>No chat history yet</p>
+                  <span>Your chat history will appear here</span>
+                </div>
+              )}
+            </div>
+
+            <div className="history-footer">
+              <button 
+                onClick={() => setShowHistory(false)} 
+                className="secondary-button"
+              >
+                Close
               </button>
+              {chatHistory.length > 0 && (
+                <button
+                  onClick={() => {
+                    setChatHistory([]);
+                    localStorage.removeItem('chatHistory');
+                    setShowHistory(false);
+                  }}
+                  className="danger-button"
+                >
+                  <i className="fas fa-trash-alt"></i>
+                  Clear History
+                </button>
+              )}
             </div>
           </div>
         </div>
