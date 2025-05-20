@@ -8,19 +8,13 @@ const WEBHOOK_URL = 'https://casillas.app.n8n.cloud/webhook/037cbcac-3c87-4055-a
 const SOCKET_URL = 'http://localhost:5000';
 
 const VoiceToText = () => {
-  // State Management
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState(null);
-  const [voices, setVoices] = useState([]);
   const [error, setError] = useState(null);
-  const [typedText, setTypedText] = useState('');
-  const [receivedMessages, setReceivedMessages] = useState([]);
-  const [autoSpeak, setAutoSpeak] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
   const [socket, setSocket] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [messages, setMessages] = useState([]);
 
-  // Speech Recognition Setup
   const {
     transcript,
     listening,
@@ -28,7 +22,6 @@ const VoiceToText = () => {
     browserSupportsSpeechRecognition
   } = useSpeechRecognition();
 
-  // Socket Connection Setup
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
       reconnection: true,
@@ -36,346 +29,131 @@ const VoiceToText = () => {
       reconnectionDelay: 1000
     });
 
-    const handleConnect = () => {
-      console.log('✅ Connected to WebSocket server');
-      setIsConnected(true);
-      setError(null);
-    };
-
-    const handleConnectError = (err) => {
-      console.error('Connection error:', err);
-      setError('Failed to connect to server. Retrying...');
-      setIsConnected(false);
-    };
-
-    const handleMessage = (data) => {
-      console.log('📨 Message from n8n:', data.message);
-      const messageText = typeof data.message === 'string' 
-        ? data.message 
-        : JSON.stringify(data.message, null, 2);
-
-      // Format and add the AI response
-      const formattedMessage = `\n\n🤖 AI: ${messageText}`;
-      setReceivedMessages(prev => [...prev, messageText]);
-      setTypedText(prev => prev + formattedMessage);
-
-      // Auto-speak if enabled
-      if (autoSpeak && !isSpeaking) {
-        handleSpeak(messageText, true);
-      }
-    };
-
-    const handleDisconnect = () => {
-      console.log('❌ Disconnected from server');
-      setIsConnected(false);
-    };
-
-    // Socket event listeners
-    newSocket.on('connect', handleConnect);
-    newSocket.on('connect_error', handleConnectError);
-    newSocket.on('n8n-message', handleMessage);
-    newSocket.on('disconnect', handleDisconnect);
-
+    newSocket.on('connect', () => setIsConnected(true));
+    newSocket.on('disconnect', () => setIsConnected(false));
+    newSocket.on('n8n-message', handleAIResponse);
+    
     setSocket(newSocket);
-
-    return () => {
-      if (newSocket) {
-        newSocket.off('connect', handleConnect);
-        newSocket.off('connect_error', handleConnectError);
-        newSocket.off('n8n-message', handleMessage);
-        newSocket.off('disconnect', handleDisconnect);
-        newSocket.disconnect();
-      }
-    };
-  }, [autoSpeak, isSpeaking]);
-
-  // Voice Setup
-  useEffect(() => {
-    const loadVoices = () => {
-      const availableVoices = window.speechSynthesis.getVoices();
-      setVoices(availableVoices);
-      
-      // Select default voice (prefer English)
-      const defaultVoice = availableVoices.find(voice => voice.lang.startsWith('en-')) || availableVoices[0];
-      setSelectedVoice(defaultVoice);
-    };
-
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-    loadVoices();
-
-    return () => {
-      window.speechSynthesis.cancel();
-    };
+    return () => newSocket.disconnect();
   }, []);
 
-  // Handlers
-  const handleSpeak = async (text, isAiResponse = false) => {
-    if (!text.trim()) {
-      setError('Please enter some text to speak');
-      return;
-    }
+  const handleAIResponse = useCallback((data) => {
+    const messageText = typeof data.message === 'string' 
+      ? data.message 
+      : JSON.stringify(data.message, null, 2);
 
-    // Prevent double submission
-    if (isProcessing || isSpeaking) {
-      console.log('Request already in progress');
-      return;
-    }
+    addMessage('ai', messageText);
+  }, []);
+
+  const handleSendMessage = async (text) => {
+    if (!text.trim() || isProcessing) return;
 
     try {
       setIsProcessing(true);
-      setError(null); // Clear any previous errors
+      addMessage('user', text);
       
-      // Only send to n8n if it's user input
-      if (!isAiResponse) {
-        const userMessage = `\n\n👤 You: ${text}`;
-        setTypedText(prev => prev + userMessage);
-        
-        // Create an AbortController for the request
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      await axios.post(WEBHOOK_URL, { body: text }, {
+        headers: { 'Content-Type': 'application/json' }
+      });
 
-        try {
-          await axios.post(WEBHOOK_URL, { body: text }, {
-            signal: controller.signal,
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          });
-          clearTimeout(timeoutId);
-          return; // Don't speak the user's input text
-        } catch (error) {
-          if (error.name === 'AbortError') {
-            setError('Request timed out. Please try again.');
-          } else if (error.response) {
-            setError(`Server error: ${error.response.data.message || 'Unknown error'}`);
-          } else if (error.request) {
-            setError('Network error. Please check your connection.');
-          } else {
-            setError('Failed to send message. Please try again.');
-          }
-          setIsProcessing(false);
-          return;
-        }
-      }
-
-      // Only speak if it's an AI response
-      if (isAiResponse) {
-        setIsSpeaking(true);
-        window.speechSynthesis.cancel(); // Cancel any ongoing speech
-        
-        const speech = new SpeechSynthesisUtterance(text);
-        speech.voice = selectedVoice;
-        speech.rate = 1;
-        speech.pitch = 1;
-
-        speech.onend = () => {
-          setIsSpeaking(false);
-          setIsProcessing(false);
-        };
-
-        speech.onerror = (event) => {
-          console.error('Speech synthesis error:', event);
-          setError(`Speech synthesis error: ${event.error}`);
-          setIsSpeaking(false);
-          setIsProcessing(false);
-        };
-
-        window.speechSynthesis.speak(speech);
-      } else {
-        setIsProcessing(false);
-      }
-    } catch (err) {
-      console.error('Operation error:', err);
-      setError('Failed to process the request. Please try again.');
-      setIsSpeaking(false);
+      setInputText('');
+    } catch (error) {
+      setError('Failed to send message. Please try again.');
+    } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleStartListening = useCallback(() => {
-    try {
-      setError(null);
-      if (!listening) {
-        SpeechRecognition.startListening({ continuous: true });
-      } else {
-        SpeechRecognition.stopListening();
+  const handleVoiceInput = useCallback(() => {
+    if (!listening) {
+      SpeechRecognition.startListening({ continuous: true });
+    } else {
+      SpeechRecognition.stopListening();
+      if (transcript.trim()) {
+        handleSendMessage(transcript);
       }
-    } catch (err) {
-      setError('Failed to access microphone. Please check your permissions.');
-      console.error('Speech recognition error:', err);
+      resetTranscript();
     }
-  }, [listening]);
+  }, [listening, transcript]);
 
-  const handleClearAll = useCallback(() => {
-    setTypedText('');
-    setReceivedMessages([]);
-    resetTranscript();
-    window.speechSynthesis.cancel();
-    setIsSpeaking(false);
-    setIsProcessing(false);
-    setError(null);
-  }, [resetTranscript]);
-
-  const handleConnectionToggle = useCallback(() => {
-    if (socket) {
-      if (isConnected) {
-        socket.disconnect();
-      } else {
-        socket.connect();
-      }
-    }
-  }, [socket, isConnected]);
+  const addMessage = (sender, text) => {
+    setMessages(prev => [...prev, {
+      id: Date.now(),
+      sender,
+      text,
+      time: new Date().toLocaleTimeString()
+    }]);
+  };
 
   if (!browserSupportsSpeechRecognition) {
     return (
-      <div className="error-container">
-        <h2>⚠️ Browser Support Error</h2>
-        <p>Your browser doesn't support speech recognition. Please use Chrome, Edge, or Safari.</p>
+      <div className="error-screen">
+        <p>Browser doesn't support speech recognition. Please use Chrome or Edge.</p>
       </div>
     );
   }
 
   return (
-    <div className="voice-container">
-      <header className="app-header">
-        <div className="header-content">
-          <h1>AI Voice Assistant</h1>
-          <div className="connection-status">
-            <span className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`} />
-            <span className="status-text">{isConnected ? 'Connected' : 'Disconnected'}</span>
-            <button 
-              onClick={handleConnectionToggle}
-              className={`connection-toggle ${isConnected ? 'disconnect' : 'connect'}`}
-            >
-              {isConnected ? 'Disconnect' : 'Connect'}
-            </button>
-          </div>
+    <div className="chat-app">
+      <header className="chat-header">
+        <h1>AI Assistant</h1>
+        <div className={`connection-status ${isConnected ? 'connected' : ''}`}>
+          {isConnected ? 'Connected' : 'Disconnected'}
         </div>
-        
-        {error && (
-          <div className="error-banner">
-            <p>{error}</p>
-            <button onClick={() => setError(null)} className="close-button">
-              ✕
-            </button>
-          </div>
-        )}
       </header>
 
-      <main className="app-content">
-        <section className="conversation-section">
-          <div className="section-header">
-            <h2>Conversation</h2>
-            <div className="voice-controls">
-              <select
-                className="voice-select"
-                value={selectedVoice?.name || ''}
-                onChange={(e) => {
-                  const voice = voices.find(v => v.name === e.target.value);
-                  setSelectedVoice(voice);
-                }}
-              >
-                {voices.map((voice) => (
-                  <option key={voice.name} value={voice.name}>
-                    {voice.name} ({voice.lang})
-                  </option>
-                ))}
-              </select>
-              
-              <label className="auto-speak-toggle">
-                <input
-                  type="checkbox"
-                  checked={autoSpeak}
-                  onChange={(e) => setAutoSpeak(e.target.checked)}
-                />
-                <span>Auto-Speak Responses</span>
-              </label>
+      <main className="chat-main">
+        <div className="messages">
+          {messages.map(({ id, sender, text, time }) => (
+            <div key={id} className={`message ${sender}`}>
+              <p>{text}</p>
+              <time>{time}</time>
             </div>
-          </div>
+          ))}
+        </div>
 
-          <div className="conversation-container">
+        <div className="input-area">
+          {error && <div className="error">{error}</div>}
+          
+          <div className="input-container">
             <textarea
-              value={typedText}
-              onChange={(e) => setTypedText(e.target.value)}
-              placeholder="Type your message here or use voice input..."
-              className="conversation-input"
-              disabled={isSpeaking || isProcessing}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage(inputText);
+                }
+              }}
+              placeholder="Type a message..."
+              disabled={isProcessing}
             />
-
-            <div className="action-buttons">
+            
+            <div className="actions">
               <button
-                onClick={() => handleSpeak(typedText)}
-                className={`action-button primary ${isSpeaking ? 'speaking' : ''}`}
-                disabled={!typedText || isSpeaking || isProcessing}
+                onClick={handleVoiceInput}
+                className={`voice ${listening ? 'active' : ''}`}
+                disabled={isProcessing}
               >
-                {isProcessing ? (
-                  <>🔄 Processing...</>
-                ) : isSpeaking ? (
-                  <>🔊 Speaking...</>
-                ) : (
-                  <>📤 Send Message</>
-                )}
+                <i className={`fas ${listening ? 'fa-stop' : 'fa-microphone'}`} />
               </button>
 
               <button
-                onClick={handleClearAll}
-                className="action-button secondary"
-                disabled={(!typedText && !transcript) || isSpeaking || isProcessing}
+                onClick={() => handleSendMessage(inputText)}
+                className="send"
+                disabled={(!inputText.trim() && !transcript) || isProcessing}
               >
-                🗑️ Clear Chat
+                <i className="fas fa-paper-plane" />
               </button>
             </div>
           </div>
-        </section>
 
-        <section className="voice-input-section">
-          <h2>Voice Input</h2>
-          <div className="voice-input-controls">
-            <button
-              onClick={handleStartListening}
-              className={`action-button ${listening ? 'recording primary' : 'secondary'}`}
-              disabled={isSpeaking || isProcessing}
-            >
-              {listening ? (
-                <>
-                  <span className="recording-indicator" />
-                  🎤 Stop Recording
-                </>
-              ) : (
-                <>🎙️ Start Recording</>
-              )}
-            </button>
-
-            {transcript && (
-              <div className="transcript-preview">
-                <h3>Current Recording</h3>
-                <p>{transcript}</p>
-                <div className="transcript-actions">
-                  <button
-                    onClick={() => {
-                      handleSpeak(transcript);
-                      resetTranscript();
-                    }}
-                    className="action-button primary"
-                    disabled={isSpeaking || isProcessing}
-                  >
-                    {isProcessing ? (
-                      <>🔄 Processing...</>
-                    ) : (
-                      <>📤 Send Recording</>
-                    )}
-                  </button>
-                  <button
-                    onClick={resetTranscript}
-                    className="action-button secondary"
-                  >
-                    🗑️ Clear Recording
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
+          {transcript && (
+            <div className="transcript">
+              {transcript}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
