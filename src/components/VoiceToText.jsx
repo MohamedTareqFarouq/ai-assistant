@@ -5,7 +5,7 @@ import './VoiceToText.css';
 import io from 'socket.io-client';
 
 const WEBHOOK_URL = 'https://casillas.app.n8n.cloud/webhook/037cbcac-3c87-4055-a6d5-20c54f50a62d';
-const SOCKET_URL = 'http://localhost:5000';
+const SOCKET_URL = 'http://192.168.8.105:5000';
 
 const VoiceToText = () => {
   const [inputText, setInputText] = useState('');
@@ -14,6 +14,7 @@ const VoiceToText = () => {
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState([]);
+  const [showNewChatConfirm, setShowNewChatConfirm] = useState(false);
 
   const {
     transcript,
@@ -57,6 +58,10 @@ const VoiceToText = () => {
       });
 
       setInputText('');
+      if (listening) {
+        SpeechRecognition.stopListening();
+        resetTranscript();
+      }
     } catch (error) {
       setError('Failed to send message. Please try again.');
     } finally {
@@ -66,22 +71,44 @@ const VoiceToText = () => {
 
   const handleVoiceInput = useCallback(() => {
     if (!listening) {
+      setInputText('');
+      resetTranscript();
       SpeechRecognition.startListening({ continuous: true });
     } else {
       SpeechRecognition.stopListening();
-      if (transcript.trim()) {
-        handleSendMessage(transcript);
-      }
-      resetTranscript();
+      setInputText(transcript);
     }
   }, [listening, transcript]);
+
+  useEffect(() => {
+    if (listening && transcript) {
+      setInputText(transcript);
+    }
+  }, [transcript, listening]);
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage(inputText);
+    }
+  };
+
+  const startNewChat = () => {
+    setMessages([]);
+    setInputText('');
+    if (listening) {
+      resetTranscript();
+      SpeechRecognition.stopListening();
+    }
+    setShowNewChatConfirm(false);
+  };
 
   const addMessage = (sender, text) => {
     setMessages(prev => [...prev, {
       id: Date.now(),
       sender,
       text,
-      time: new Date().toLocaleTimeString()
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }]);
   };
 
@@ -97,8 +124,19 @@ const VoiceToText = () => {
     <div className="chat-app">
       <header className="chat-header">
         <h1>AI Assistant</h1>
-        <div className={`connection-status ${isConnected ? 'connected' : ''}`}>
-          {isConnected ? 'Connected' : 'Disconnected'}
+        <div className="header-actions">
+          <div className={`connection-status ${isConnected ? 'connected' : ''}`}>
+            {isConnected ? 'Connected' : 'Disconnected'}
+          </div>
+          {messages.length > 0 && (
+            <button 
+              className="new-chat" 
+              onClick={() => setShowNewChatConfirm(true)}
+              title="Start new chat"
+            >
+              <i className="fas fa-plus" />
+            </button>
+          )}
         </div>
       </header>
 
@@ -110,23 +148,28 @@ const VoiceToText = () => {
               <time>{time}</time>
             </div>
           ))}
+          {isProcessing && (
+            <div className="message ai typing">
+              <div className="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="input-area">
-          {error && <div className="error">{error}</div>}
+          {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
           
           <div className="input-container">
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage(inputText);
-                }
-              }}
+              onKeyDown={handleKeyDown}
               placeholder="Type a message..."
               disabled={isProcessing}
+              rows={1}
             />
             
             <div className="actions">
@@ -147,14 +190,25 @@ const VoiceToText = () => {
               </button>
             </div>
           </div>
-
-          {transcript && (
-            <div className="transcript">
-              {transcript}
-            </div>
-          )}
         </div>
       </main>
+
+      {showNewChatConfirm && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>Start New Chat</h3>
+            <p>Are you sure you want to start a new chat? This will clear the current conversation.</p>
+            <div className="modal-actions">
+              <button onClick={() => setShowNewChatConfirm(false)} className="cancel">
+                Cancel
+              </button>
+              <button onClick={startNewChat} className="confirm">
+                Start New Chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
