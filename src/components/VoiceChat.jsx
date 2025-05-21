@@ -23,18 +23,20 @@ const VoiceChat = ({ onSwitchMode }) => {
   } = useSpeechRecognition();
 
   useEffect(() => {
+    const synthesis = speechSynthesisRef.current;
+    
     const loadVoices = () => {
-      voices.current = speechSynthesisRef.current.getVoices();
+      voices.current = synthesis.getVoices();
     };
 
     loadVoices();
-    if (speechSynthesisRef.current.onvoiceschanged !== undefined) {
-      speechSynthesisRef.current.onvoiceschanged = loadVoices;
+    if (synthesis.onvoiceschanged !== undefined) {
+      synthesis.onvoiceschanged = loadVoices;
     }
 
     return () => {
-      if (speechSynthesisRef.current.speaking) {
-        speechSynthesisRef.current.cancel();
+      if (synthesis.speaking) {
+        synthesis.cancel();
       }
     };
   }, []);
@@ -218,4 +220,4 @@ const VoiceChat = ({ onSwitchMode }) => {
   );
 };
 
-export default VoiceChat; 
+export default VoiceChat;
