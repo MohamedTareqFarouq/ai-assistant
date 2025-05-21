@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import axios from 'axios';
-import io from 'socket.io-client';
+import { getSocket } from '../utils/socketInit';
 import './VoiceChat.css';
 
 const WEBHOOK_URL = 'https://casillas.app.n8n.cloud/webhook/037cbcac-3c87-4055-a6d5-20c54f50a62d';
-const SOCKET_URL = process.env.NODE_ENV === 'production' 
-  ? window.location.origin 
-  : 'http://localhost:3000';
 
 const VoiceChat = ({ onSwitchMode }) => {
   const [isProcessing, setIsProcessing] = useState(false);
@@ -79,18 +76,20 @@ const VoiceChat = ({ onSwitchMode }) => {
   }, [speak]);
 
   useEffect(() => {
-    const newSocket = io(SOCKET_URL, {
-      path: '/api/socket',
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000
-    });
+    // Get the initialized socket instance
+    const socket = getSocket();
 
-    newSocket.on('connect', () => setIsConnected(true));
-    newSocket.on('disconnect', () => setIsConnected(false));
-    newSocket.on('n8n-message', handleAIResponse);
+    socket.on('connect', () => setIsConnected(true));
+    socket.on('disconnect', () => setIsConnected(false));
+    socket.on('n8n-message', handleAIResponse);
     
-    return () => newSocket.disconnect();
+    // No need to disconnect since we're using a shared socket
+
+    return () => {
+      socket.off('n8n-message', handleAIResponse);
+      socket.off('connect');
+      socket.off('disconnect');
+    };
   }, [handleAIResponse]);
 
   const addMessage = (sender, text) => {

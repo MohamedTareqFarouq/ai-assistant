@@ -2,13 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import './VoiceToText.css';
-import io from 'socket.io-client';
+import { getSocket } from '../utils/socketInit';
 import VoiceChat from './VoiceChat';
 
 const WEBHOOK_URL = 'https://mikooto.app.n8n.cloud/webhook/f17e458d-9059-42c2-8d14-57acda06fc41';
-const SOCKET_URL = process.env.NODE_ENV === 'production' 
-  ? window.location.origin 
-  : 'http://localhost:3000';
 
 const VoiceToText = () => {
   const [inputText, setInputText] = useState('');
@@ -66,18 +63,20 @@ const VoiceToText = () => {
   }, [mode, speak]);
 
   useEffect(() => {
-    const newSocket = io(SOCKET_URL, {
-      path: '/api/socket',
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000
-    });
+    // Get the initialized socket instance
+    const socket = getSocket();
 
-    newSocket.on('connect', () => setIsConnected(true));
-    newSocket.on('disconnect', () => setIsConnected(false));
-    newSocket.on('n8n-message', handleAIResponse);
+    socket.on('connect', () => setIsConnected(true));
+    socket.on('disconnect', () => setIsConnected(false));
+    socket.on('n8n-message', handleAIResponse);
     
-    return () => newSocket.disconnect();
+    // No need to disconnect since we're using a shared socket
+
+    return () => {
+      socket.off('n8n-message', handleAIResponse);
+      socket.off('connect');
+      socket.off('disconnect');
+    };
   }, [handleAIResponse]);
 
   useEffect(() => {
