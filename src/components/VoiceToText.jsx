@@ -6,7 +6,9 @@ import io from 'socket.io-client';
 import VoiceChat from './VoiceChat';
 
 const WEBHOOK_URL = 'https://mikooto.app.n8n.cloud/webhook/f17e458d-9059-42c2-8d14-57acda06fc41';
-const SOCKET_URL = 'http://192.168.8.114:5000';
+const SOCKET_URL = process.env.NODE_ENV === 'production' 
+  ? window.location.origin 
+  : 'http://localhost:3000';
 
 const VoiceToText = () => {
   const [inputText, setInputText] = useState('');
@@ -65,6 +67,7 @@ const VoiceToText = () => {
 
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
+      path: '/api/socket',
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000
