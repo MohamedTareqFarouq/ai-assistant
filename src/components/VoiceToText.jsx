@@ -2,22 +2,24 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import './VoiceToText.css';
-import { getSocket } from '../utils/socketInit';
 import VoiceChat from './VoiceChat';
 
 const WEBHOOK_URL = 'https://mikooto.app.n8n.cloud/webhook/f17e458d-9059-42c2-8d14-57acda06fc41';
+const POLLING_INTERVAL = 2000; // 2 seconds
 
 const VoiceToText = () => {
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(true); // Default to true for polling
   const [messages, setMessages] = useState([]);
   const [chatHistory, setChatHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [mode, setMode] = useState('text'); // 'text' or 'voice'
+  const [lastMessageTimestamp, setLastMessageTimestamp] = useState(0);
   const speechSynthesisRef = useRef(window.speechSynthesis);
   const voices = useRef([]);
+  const pollingRef = useRef(null);
 
   const {
     transcript,
@@ -51,9 +53,9 @@ const VoiceToText = () => {
   }, []);
 
   const handleAIResponse = useCallback((data) => {
-    const messageText = typeof data.message === 'string' 
-      ? data.message 
-      : JSON.stringify(data.message, null, 2);
+    const messageText = typeof data.content === 'string' 
+      ? data.content 
+      : JSON.stringify(data.content, null, 2);
 
     addMessage('ai', messageText);
     
@@ -63,21 +65,52 @@ const VoiceToText = () => {
   }, [mode, speak]);
 
   useEffect(() => {
-    // Get the initialized socket instance
-    const socket = getSocket();
-
-    socket.on('connect', () => setIsConnected(true));
-    socket.on('disconnect', () => setIsConnected(false));
-    socket.on('n8n-message', handleAIResponse);
-    
-    // No need to disconnect since we're using a shared socket
-
-    return () => {
-      socket.off('n8n-message', handleAIResponse);
-      socket.off('connect');
-      socket.off('disconnect');
+    // Function to poll for new messages
+    const pollMessages = async () => {
+      try {
+        const apiUrl = process.env.NODE_ENV === 'production'
+          ? `${window.location.origin}/api/messages?since=${lastMessageTimestamp}`
+          : `http://localhost:3000/api/messages?since=${lastMessageTimestamp}`;
+          
+        const response = await fetch(apiUrl);
+        
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        
+        const data = await response.json();
+        
+        // Handle any new messages
+        if (data.messages && data.messages.length > 0) {
+          data.messages.forEach(message => {
+            handleAIResponse(message);
+          });
+          
+          // Update the last message timestamp
+          setLastMessageTimestamp(data.lastTimestamp);
+        }
+        
+        // Set as connected since polling succeeded
+        setIsConnected(true);
+      } catch (error) {
+        console.error('Error polling for messages:', error);
+        setIsConnected(false);
+      }
     };
-  }, [handleAIResponse]);
+    
+    // Start polling
+    pollingRef.current = setInterval(pollMessages, POLLING_INTERVAL);
+    
+    // Initial poll
+    pollMessages();
+    
+    // Cleanup interval on unmount
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+      }
+    };
+  }, [lastMessageTimestamp, handleAIResponse]);
 
   useEffect(() => {
     const synthesis = speechSynthesisRef.current;

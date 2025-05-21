@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import axios from 'axios';
-import { getSocket } from '../utils/socketInit';
 import './VoiceChat.css';
 
 const WEBHOOK_URL = 'https://casillas.app.n8n.cloud/webhook/037cbcac-3c87-4055-a6d5-20c54f50a62d';
+const POLLING_INTERVAL = 2000; // 2 seconds
 
 const VoiceChat = ({ onSwitchMode }) => {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(true); // Default to true for polling
   const [messages, setMessages] = useState([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [lastMessageTimestamp, setLastMessageTimestamp] = useState(0);
   const speechSynthesisRef = useRef(window.speechSynthesis);
   const voices = useRef([]);
+  const pollingRef = useRef(null);
 
   const {
     transcript,
@@ -66,31 +68,64 @@ const VoiceChat = ({ onSwitchMode }) => {
     speechSynthesisRef.current.speak(utterance);
   }, [isProcessing, listening]);
 
+  // Handler for new AI messages
   const handleAIResponse = useCallback((data) => {
-    const messageText = typeof data.message === 'string' 
-      ? data.message 
-      : JSON.stringify(data.message, null, 2);
+    const messageText = typeof data.content === 'string' 
+      ? data.content 
+      : JSON.stringify(data.content, null, 2);
 
     addMessage('ai', messageText);
     speak(messageText);
   }, [speak]);
 
+  // Setup polling mechanism for messages
   useEffect(() => {
-    // Get the initialized socket instance
-    const socket = getSocket();
-
-    socket.on('connect', () => setIsConnected(true));
-    socket.on('disconnect', () => setIsConnected(false));
-    socket.on('n8n-message', handleAIResponse);
-    
-    // No need to disconnect since we're using a shared socket
-
-    return () => {
-      socket.off('n8n-message', handleAIResponse);
-      socket.off('connect');
-      socket.off('disconnect');
+    // Function to poll for new messages
+    const pollMessages = async () => {
+      try {
+        const apiUrl = process.env.NODE_ENV === 'production'
+          ? `${window.location.origin}/api/messages?since=${lastMessageTimestamp}`
+          : `http://localhost:3000/api/messages?since=${lastMessageTimestamp}`;
+          
+        const response = await fetch(apiUrl);
+        
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        
+        const data = await response.json();
+        
+        // Handle any new messages
+        if (data.messages && data.messages.length > 0) {
+          data.messages.forEach(message => {
+            handleAIResponse(message);
+          });
+          
+          // Update the last message timestamp
+          setLastMessageTimestamp(data.lastTimestamp);
+        }
+        
+        // Set as connected since polling succeeded
+        setIsConnected(true);
+      } catch (error) {
+        console.error('Error polling for messages:', error);
+        setIsConnected(false);
+      }
     };
-  }, [handleAIResponse]);
+    
+    // Start polling
+    pollingRef.current = setInterval(pollMessages, POLLING_INTERVAL);
+    
+    // Initial poll
+    pollMessages();
+    
+    // Cleanup interval on unmount
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+      }
+    };
+  }, [lastMessageTimestamp, handleAIResponse]);
 
   const addMessage = (sender, text) => {
     setMessages(prev => [...prev, {
