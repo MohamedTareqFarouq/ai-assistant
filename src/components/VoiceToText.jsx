@@ -164,7 +164,7 @@ const VoiceToText = () => {
       SpeechRecognition.stopListening();
       setInputText(transcript);
     }
-  }, [listening, transcript]);
+  }, [listening, transcript, resetTranscript]);
 
   useEffect(() => {
     if (listening && transcript) {
