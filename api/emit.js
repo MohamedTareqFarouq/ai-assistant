@@ -1,5 +1,7 @@
-// Import messages array from the messages endpoint
-import { messages } from './messages';
+// Initialize the global messages array if it doesn't exist
+if (typeof global.messages === 'undefined') {
+  global.messages = [];
+}
 
 export default function handler(req, res) {
   // Set CORS headers
@@ -27,25 +29,12 @@ export default function handler(req, res) {
     type: 'ai'
   };
 
-  // If using the imported messages array, use that
-  if (global.messages) {
-    global.messages.push(message);
-    
-    // Limit array size to prevent memory issues
-    if (global.messages.length > 100) {
-      global.messages.shift();
-    }
-  } else {
-    // Otherwise use the module-scoped messages array
-    const messagesModule = require('./messages');
-    if (messagesModule.messages) {
-      messagesModule.messages.push(message);
-      
-      // Limit array size
-      if (messagesModule.messages.length > 100) {
-        messagesModule.messages.shift();
-      }
-    }
+  // Add the message to the global messages array
+  global.messages.push(message);
+  
+  // Limit array size to prevent memory issues
+  if (global.messages.length > 100) {
+    global.messages.shift();
   }
 
   return res.json({ 

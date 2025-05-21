@@ -1,9 +1,9 @@
-// Simple in-memory message store
+// Simple in-memory message store (this will be reset on cold starts)
 // In a production app, you'd use a database instead
 export const messages = [];
 
-// Store messages in global scope to share between serverless functions
-if (!global.messages) {
+// Initialize the global messages array if it doesn't exist
+if (typeof global.messages === 'undefined') {
   global.messages = messages;
 }
 
@@ -22,6 +22,16 @@ export default function handler(req, res) {
   if (req.method === 'GET') {
     const since = req.query.since ? parseInt(req.query.since, 10) : 0;
     
+    // Add a mock message if no messages exist (for testing)
+    if (global.messages.length === 0 && since === 0) {
+      global.messages.push({
+        id: Date.now(),
+        timestamp: Date.now(),
+        content: "Welcome to the AI Assistant! Your messages will appear here.",
+        type: 'ai'
+      });
+    }
+    
     // Filter to only return messages newer than the timestamp
     const newMessages = global.messages.filter(msg => msg.timestamp > since);
     
@@ -34,6 +44,29 @@ export default function handler(req, res) {
       messages: newMessages,
       lastTimestamp
     });
+  }
+  
+  // Handle POST requests to add messages (for testing)
+  if (req.method === 'POST') {
+    try {
+      const message = {
+        id: Date.now(),
+        timestamp: Date.now(),
+        content: req.body.message || "Test message",
+        type: req.body.type || 'ai'
+      };
+      
+      global.messages.push(message);
+      
+      // Limit array size to prevent memory issues
+      if (global.messages.length > 100) {
+        global.messages.shift();
+      }
+      
+      return res.status(200).json({ success: true, message });
+    } catch (error) {
+      return res.status(400).json({ error: 'Invalid message data' });
+    }
   }
   
   // Handle unimplemented methods
