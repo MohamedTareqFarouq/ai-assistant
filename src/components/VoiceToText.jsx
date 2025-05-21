@@ -12,13 +12,12 @@ const VoiceToText = () => {
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
-  const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState([]);
   const [chatHistory, setChatHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [mode, setMode] = useState('text'); // 'text' or 'voice'
-  const speechSynthesis = window.speechSynthesis;
+  const speechSynthesisRef = useRef(window.speechSynthesis);
   const voices = useRef([]);
 
   const {
@@ -29,12 +28,40 @@ const VoiceToText = () => {
   } = useSpeechRecognition();
 
   useEffect(() => {
-    // Load chat history from localStorage on component mount
     const savedHistory = localStorage.getItem('chatHistory');
     if (savedHistory) {
       setChatHistory(JSON.parse(savedHistory));
     }
   }, []);
+
+  const speak = useCallback((text) => {
+    if (speechSynthesisRef.current.speaking) {
+      speechSynthesisRef.current.cancel();
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const englishVoice = voices.current.find(voice => 
+      voice.lang.startsWith('en') && voice.name.includes('Male')
+    );
+    if (englishVoice) {
+      utterance.voice = englishVoice;
+    }
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    speechSynthesisRef.current.speak(utterance);
+  }, []);
+
+  const handleAIResponse = useCallback((data) => {
+    const messageText = typeof data.message === 'string' 
+      ? data.message 
+      : JSON.stringify(data.message, null, 2);
+
+    addMessage('ai', messageText);
+    
+    if (mode === 'voice') {
+      speak(messageText);
+    }
+  }, [mode, speak]);
 
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
@@ -47,57 +74,25 @@ const VoiceToText = () => {
     newSocket.on('disconnect', () => setIsConnected(false));
     newSocket.on('n8n-message', handleAIResponse);
     
-    setSocket(newSocket);
     return () => newSocket.disconnect();
-  }, []);
+  }, [handleAIResponse]);
 
   useEffect(() => {
-    // Load available voices
     const loadVoices = () => {
-      voices.current = speechSynthesis.getVoices();
+      voices.current = speechSynthesisRef.current.getVoices();
     };
 
     loadVoices();
-    if (speechSynthesis.onvoiceschanged !== undefined) {
-      speechSynthesis.onvoiceschanged = loadVoices;
+    if (speechSynthesisRef.current.onvoiceschanged !== undefined) {
+      speechSynthesisRef.current.onvoiceschanged = loadVoices;
     }
 
     return () => {
-      if (speechSynthesis.speaking) {
-        speechSynthesis.cancel();
+      if (speechSynthesisRef.current.speaking) {
+        speechSynthesisRef.current.cancel();
       }
     };
   }, []);
-
-  const speak = (text) => {
-    if (speechSynthesis.speaking) {
-      speechSynthesis.cancel();
-    }
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    // Try to find an English voice
-    const englishVoice = voices.current.find(voice => 
-      voice.lang.startsWith('en') && voice.name.includes('Male')
-    );
-    if (englishVoice) {
-      utterance.voice = englishVoice;
-    }
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    speechSynthesis.speak(utterance);
-  };
-
-  const handleAIResponse = useCallback((data) => {
-    const messageText = typeof data.message === 'string' 
-      ? data.message 
-      : JSON.stringify(data.message, null, 2);
-
-    addMessage('ai', messageText);
-    
-    if (mode === 'voice') {
-      speak(messageText);
-    }
-  }, [mode]);
 
   const saveCurrentChatToHistory = () => {
     if (messages.length > 0) {

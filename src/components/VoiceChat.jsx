@@ -9,12 +9,10 @@ const SOCKET_URL = 'http://192.168.8.105:5000';
 
 const VoiceChat = ({ onSwitchMode }) => {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState(null);
-  const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const speechSynthesis = window.speechSynthesis;
+  const speechSynthesisRef = useRef(window.speechSynthesis);
   const voices = useRef([]);
 
   const {
@@ -26,39 +24,24 @@ const VoiceChat = ({ onSwitchMode }) => {
 
   useEffect(() => {
     const loadVoices = () => {
-      voices.current = speechSynthesis.getVoices();
+      voices.current = speechSynthesisRef.current.getVoices();
     };
 
     loadVoices();
-    if (speechSynthesis.onvoiceschanged !== undefined) {
-      speechSynthesis.onvoiceschanged = loadVoices;
+    if (speechSynthesisRef.current.onvoiceschanged !== undefined) {
+      speechSynthesisRef.current.onvoiceschanged = loadVoices;
     }
 
     return () => {
-      if (speechSynthesis.speaking) {
-        speechSynthesis.cancel();
+      if (speechSynthesisRef.current.speaking) {
+        speechSynthesisRef.current.cancel();
       }
     };
   }, []);
 
-  useEffect(() => {
-    const newSocket = io(SOCKET_URL, {
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000
-    });
-
-    newSocket.on('connect', () => setIsConnected(true));
-    newSocket.on('disconnect', () => setIsConnected(false));
-    newSocket.on('n8n-message', handleAIResponse);
-    
-    setSocket(newSocket);
-    return () => newSocket.disconnect();
-  }, []);
-
-  const speak = (text) => {
-    if (speechSynthesis.speaking) {
-      speechSynthesis.cancel();
+  const speak = useCallback((text) => {
+    if (speechSynthesisRef.current.speaking) {
+      speechSynthesisRef.current.cancel();
     }
 
     const utterance = new SpeechSynthesisUtterance(text);
@@ -74,14 +57,13 @@ const VoiceChat = ({ onSwitchMode }) => {
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => {
       setIsSpeaking(false);
-      // Start listening again after AI finishes speaking
       if (!listening && !isProcessing) {
         SpeechRecognition.startListening({ continuous: true });
       }
     };
 
-    speechSynthesis.speak(utterance);
-  };
+    speechSynthesisRef.current.speak(utterance);
+  }, [isProcessing, listening]);
 
   const handleAIResponse = useCallback((data) => {
     const messageText = typeof data.message === 'string' 
@@ -90,7 +72,21 @@ const VoiceChat = ({ onSwitchMode }) => {
 
     addMessage('ai', messageText);
     speak(messageText);
-  }, []);
+  }, [speak]);
+
+  useEffect(() => {
+    const newSocket = io(SOCKET_URL, {
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
+    });
+
+    newSocket.on('connect', () => setIsConnected(true));
+    newSocket.on('disconnect', () => setIsConnected(false));
+    newSocket.on('n8n-message', handleAIResponse);
+    
+    return () => newSocket.disconnect();
+  }, [handleAIResponse]);
 
   const addMessage = (sender, text) => {
     setMessages(prev => [...prev, {
@@ -101,12 +97,11 @@ const VoiceChat = ({ onSwitchMode }) => {
     }]);
   };
 
-  const handleSendMessage = async (text) => {
+  const handleSendMessage = useCallback(async (text) => {
     if (!text.trim() || isProcessing) return;
 
     try {
       setIsProcessing(true);
-      // Stop listening while processing
       if (listening) {
         SpeechRecognition.stopListening();
       }
@@ -117,30 +112,26 @@ const VoiceChat = ({ onSwitchMode }) => {
       await axios.post(WEBHOOK_URL, { body: text }, {
         headers: { 'Content-Type': 'application/json' }
       });
-    } catch (error) {
-      setError('Failed to send message. Please try again.');
-      // Restart listening if there's an error
-      if (!listening && !speechSynthesis.speaking) {
+    } catch (err) {
+      if (!listening && !speechSynthesisRef.current.speaking) {
         SpeechRecognition.startListening({ continuous: true });
       }
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [isProcessing, listening, resetTranscript]);
 
   useEffect(() => {
-    // Auto-send message when user stops speaking
     let timeout;
     if (transcript && !isProcessing && !isSpeaking) {
       timeout = setTimeout(() => {
         handleSendMessage(transcript);
-      }, 1500); // 1.5 second delay
+      }, 1500);
     }
 
     return () => clearTimeout(timeout);
-  }, [transcript, isProcessing, isSpeaking]);
+  }, [transcript, isProcessing, isSpeaking, handleSendMessage]);
 
-  // Start listening automatically when component mounts
   useEffect(() => {
     if (!listening && !isProcessing && !isSpeaking) {
       SpeechRecognition.startListening({ continuous: true });
@@ -209,7 +200,7 @@ const VoiceChat = ({ onSwitchMode }) => {
             className={`voice-button ${listening ? 'active' : ''} ${isSpeaking ? 'speaking' : ''}`}
             onClick={() => {
               if (isSpeaking) {
-                speechSynthesis.cancel();
+                speechSynthesisRef.current.cancel();
                 setIsSpeaking(false);
               } else if (listening) {
                 SpeechRecognition.stopListening();
